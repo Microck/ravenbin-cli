@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ravenbin-upload"
-version = "0.1.0"
-description = "One-line temporary file uploads to Raven Bin"
+name = "ravenbin-cli"
+version = "0.2.0"
+description = "Upload and download temporary files with Raven Bin"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
@@ -13,7 +13,7 @@ authors = [{ name = "Microck" }]
 dependencies = ["playwright>=1.45"]
 
 [project.scripts]
-ravenbin-upload = "ravenbin_upload.cli:main"
+ravenbin = "ravenbin.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

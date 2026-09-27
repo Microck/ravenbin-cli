@@ -1,4 +1,4 @@
-<h1 align="center">ravenbin-upload</h1>
+<h1 align="center">ravenbin-cli</h1>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-mit-000000?style=flat-square" alt="license badge"></a>
@@ -6,99 +6,45 @@
 
 ---
 
-`ravenbin-upload` uploads a file to [Raven Bin](https://ravenbin.com/) from one shell command. it opens Raven's current web client in headless Chromium, so Raven performs the client-side encryption and upload instead of this tool reimplementing its protocol.
+`ravenbin` uploads files to [Raven Bin](https://ravenbin.com/) and downloads them from complete share URLs. It runs Raven's web client in headless Chromium, so the browser handles encryption and decryption.
 
-[github](https://github.com/Microck/ravenbin-upload) | [raven bin](https://ravenbin.com/) | [about bin](https://ravenbin.com/about/)
-
-## start here
-
-### install from source
+## install
 
 ```bash
-git clone https://github.com/Microck/ravenbin-upload.git
-cd ravenbin-upload
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install .
-playwright install chromium
+python3 -m pip install git+https://github.com/Microck/ravenbin-cli.git
+python3 -m playwright install chromium
 ```
 
-### upload a file
+Python 3.9 or newer is required. To use a system browser, set `RAVENBIN_CHROMIUM_PATH` to its executable path.
+
+## upload
 
 ```bash
-ravenbin-upload ./report.zip
+ravenbin upload ./report.zip
+ravenbin upload ./short-lived.log --expiry 5m
 ```
 
-the share URL is printed to stdout. progress and errors go to stderr.
+The complete share URL is printed to stdout. Errors go to stderr. The default expiry is `12h`; Raven also offers `5m`, `15m`, `1h`, `2h`, and `4h`.
+
+## download
+
+Pass the complete URL, including the decryption key after `#`:
 
 ```bash
-link="$(ravenbin-upload /tmp/output.json)"
-printf '%s\n' "$link"
+link="$(ravenbin upload ./report.zip)"
+ravenbin fetch "$link" --output ./copy.zip
+ravenbin download "$link" --output ./copy.zip --force
 ```
 
-### fetch a file
+`fetch` and `download` are the same command. If `--output` is omitted, the saved file uses Raven's filename. The command refuses to overwrite an existing path unless you pass `--force`. It prints the saved path to stdout.
 
-pass the complete Raven URL, including the part after `#`:
-
-```bash
-ravenbin-upload fetch "$link" --output /tmp/output.json
-```
-
-if `--output` is omitted, the stored filename is used. add `--force` to overwrite an existing file:
-
-```bash
-ravenbin-upload fetch "$link" --force
-```
-
-fetch uses Raven's browser client so its request token and decryption flow work correctly. the current fetch path supports files up to 100 MB. larger files use Raven's streaming browser path and are rejected instead of being saved incompletely.
-
-## expiry
-
-raven currently supports these expiry values:
-
-```bash
-ravenbin-upload --expiry 5m ./short-lived.log
-ravenbin-upload --expiry 15m ./report.zip
-ravenbin-upload --expiry 12h ./artifact.tar
-```
-
-the default is `12h`, Raven's longest public expiry. available values are `5m`, `15m`, `1h`, `2h`, `4h`, and `12h`.
-
-## why
-
-if an agent or shell workflow needs to share a temporary artifact, this gives it one command without a separate upload service or a litterbox workflow.
-
-- upload arbitrary file types
-- keep the normal Raven Bin client-side encryption flow
-- use the returned URL directly in shell pipelines
-- remove the local staged copy after upload
-- choose the shortest expiry when the artifact should disappear quickly
+Use `ravenbin --help`, `ravenbin upload --help`, or `ravenbin fetch --help` for the full command syntax. Both operations accept `--timeout` in seconds (default: 300).
 
 ## how it works
 
-the command runs Raven's current web client in headless Chromium. it selects the file, chooses the expiry, and submits the normal `Create Bin` flow. Raven encrypts the file in the browser and uploads it in chunks.
+The browser runs Raven's current client. Uploads use its `Create Bin` flow, and downloads use its normal decryption and download flow. For uploads, the CLI stages a temporary copy under the user's home directory because some Chromium sandbox variants cannot read `/tmp`. It removes the copy after upload.
 
-the wrapper stages the input in a temporary directory under the user's home directory. this supports Chromium sandbox variants that cannot read `/tmp`. the staged copy is removed after upload.
-
-## requirements
-
-- Python 3.9 or newer
-- Playwright
-- Chromium, installed with `playwright install chromium` or selected with `RAVENBIN_CHROMIUM_PATH`
-
-for a system browser:
-
-```bash
-export RAVENBIN_CHROMIUM_PATH=/usr/bin/chromium
-```
-
-## limits and security
-
-- raven currently allows six active bins and two in-progress uploads.
-- raven's public service can be busy or unavailable.
-- the complete returned URL is sensitive. the decryption key is stored after `#`.
-- do not put returned URLs in logs or share them with people who should not read the file.
-- do not use Raven Bin as the only protection for credentials, private keys, or regulated data.
+Raven currently limits users to six active bins and two uploads in progress. Its public service may be busy or unavailable. Share URLs are sensitive because the decryption key is stored after `#`; do not put them in logs or share them with people who should not read the file. Do not use Raven Bin as the only protection for credentials, private keys, or regulated data.
 
 ## license
 
