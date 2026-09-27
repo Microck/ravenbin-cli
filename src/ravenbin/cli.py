@@ -3,7 +3,6 @@
 
 import argparse
 import asyncio
-import base64
 import os
 import shutil
 import sys
@@ -15,16 +14,14 @@ from urllib.parse import urlsplit
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
+from . import __version__
+
 URL = "https://ravenbin.com/"
-CHROMIUM_CANDIDATES = ("chromium", "chromium-browser", "google-chrome")
+
+
 def browser_options() -> dict[str, Any]:
     options = {"headless": True}
     executable = os.environ.get("RAVENBIN_CHROMIUM_PATH")
-    if not executable:
-        executable = next(
-            (shutil.which(name) for name in CHROMIUM_CANDIDATES if shutil.which(name)),
-            None,
-        )
     if executable:
         options["executable_path"] = executable
     if os.geteuid() == 0:
@@ -41,31 +38,40 @@ def add_common_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def parse_args() -> argparse.Namespace:
-    if len(sys.argv) > 1 and sys.argv[1] == "fetch":
-        parser = argparse.ArgumentParser(
-            prog="ravenbin-upload fetch",
-            description="Fetch and decrypt a Raven Bin URL.",
-        )
-        parser.add_argument("url", help="Complete Raven Bin URL, including the # key.")
-        parser.add_argument("--output", type=Path, help="Output path (default: stored filename).")
-        parser.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
-        add_common_options(parser)
-        return parser.parse_args(sys.argv[2:])
-
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="ravenbin-upload",
-        description="Encrypt and upload a file to Raven Bin.",
+        prog="ravenbin",
+        description="Upload and download encrypted files with Raven Bin.",
     )
-    parser.add_argument("file", type=Path)
     parser.add_argument(
+        "--version", action="version", version=f"ravenbin {__version__}"
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    upload_parser = commands.add_parser("upload", help="Encrypt and upload a file.")
+    upload_parser.add_argument("file", type=Path)
+    upload_parser.add_argument(
         "--expiry",
         choices=("5m", "15m", "1h", "2h", "4h", "12h"),
         default="12h",
         help="How long Raven Bin keeps the upload (default: 12h).",
     )
-    add_common_options(parser)
-    return parser.parse_args()
+    add_common_options(upload_parser)
+
+    fetch_parser = commands.add_parser(
+        "fetch", aliases=["download"], help="Fetch and decrypt a share URL."
+    )
+    fetch_parser.add_argument(
+        "url", help="Complete Raven Bin URL, including the # key."
+    )
+    fetch_parser.add_argument(
+        "--output", type=Path, help="Output path (default: stored filename)."
+    )
+    fetch_parser.add_argument(
+        "--force", action="store_true", help="Overwrite an existing output file."
+    )
+    add_common_options(fetch_parser)
+    return parser.parse_args(argv)
 
 
 async def upload(file_path: Path, expiry: str, timeout: float) -> str:
@@ -114,79 +120,100 @@ def validate_fetch_url(url: str) -> None:
     if parsed.scheme != "https" or parsed.hostname != "ravenbin.com":
         raise ValueError("URL must be a complete https://ravenbin.com/ share URL")
     if not parsed.query or not parsed.fragment:
-        raise ValueError("URL must include both the bin id and the decryption key after #")
+        raise ValueError(
+            "URL must include both the bin id and the decryption key after #"
+        )
 
 
-async def fetch_bin(url: str, output: Optional[Path], force: bool, timeout: float) -> Path:
+async def fetch_bin(
+    url: str, output: Optional[Path], force: bool, timeout: float
+) -> Path:
     validate_fetch_url(url)
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(**browser_options())
-        page = await browser.new_page()
+        page = await browser.new_page(accept_downloads=True)
         page.set_default_timeout(timeout * 1000)
+        # Native save dialogs cannot be accepted headlessly. Use Raven's OPFS path.
+        await page.add_init_script("window.showSaveFilePicker = undefined;")
+        downloaded = asyncio.get_running_loop().create_future()
+        page.on(
+            "download",
+            lambda item: downloaded.set_result(item) if not downloaded.done() else None,
+        )
+        ready = None
         try:
             await page.goto(url, wait_until="domcontentloaded")
-            await page.wait_for_function(
-                """() => {
+            ready = asyncio.create_task(
+                page.wait_for_function(
+                    """() => {
                     const download = document.querySelector('#download[href]');
                     const text = document.querySelector('#output');
                     const error = document.querySelector('#read-err:not(.hidden)');
                     return download || (text && text.value) || error;
                 }""",
-                timeout=timeout * 1000,
-            )
-            error = await page.locator("#read-err").text_content()
-            if error and await page.locator("#read-err").is_visible():
-                raise RuntimeError(error.strip())
-
-            download = page.locator("#download[href]")
-            if await download.count():
-                blob_info = await download.evaluate(
-                    """async (element) => {
-                        const response = await fetch(element.href);
-                        const blob = await response.blob();
-                        if (blob.size > 100000000) {
-                            return {tooLarge: true, size: blob.size};
-                        }
-                        const bytes = new Uint8Array(await blob.arrayBuffer());
-                        let binary = '';
-                        for (let i = 0; i < bytes.length; i += 0x8000) {
-                            binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-                        }
-                        return {
-                            name: element.download || 'download',
-                            data: btoa(binary),
-                        };
-                    }"""
+                    timeout=timeout * 1000,
                 )
-                if blob_info.get("tooLarge"):
-                    raise RuntimeError(
-                        "this fetch path supports files up to 100 MB; Raven used its streaming download path"
-                    )
-                data = base64.b64decode(blob_info["data"])
-                default_name = Path(blob_info["name"]).name or "download"
+            )
+            done, _ = await asyncio.wait(
+                [ready, downloaded],
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                raise RuntimeError("fetch timed out")
+            if ready in done:
+                await ready
+                error = await page.locator("#read-err").text_content()
+                if error and await page.locator("#read-err").is_visible():
+                    raise RuntimeError(error.strip())
+                if await page.locator("#download[href]").count():
+                    await page.locator("#download").click()
+                    await asyncio.wait_for(asyncio.shield(downloaded), timeout)
+            if downloaded.done():
+                download = downloaded.result()
+                destination = output or Path(download.suggested_filename).name
             else:
-                data = (await page.locator("#output").input_value()).encode()
-                default_name = "download.txt"
+                destination = output or Path("download.txt")
+            destination = Path(destination)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            # Keep a failed transfer away from the final path. A hard link also
+            # refuses to replace an existing file when --force is absent.
+            with tempfile.TemporaryDirectory(
+                prefix="ravenbin-download-", dir=destination.parent
+            ) as staging_dir:
+                staged_path = Path(staging_dir) / "download"
+                if downloaded.done():
+                    await asyncio.wait_for(download.save_as(staged_path), timeout)
+                else:
+                    staged_path.write_text(await page.locator("#output").input_value())
+                try:
+                    if force:
+                        staged_path.replace(destination)
+                    else:
+                        os.link(staged_path, destination)
+                except FileExistsError as error:
+                    raise FileExistsError(
+                        f"output exists: {destination}; use --force to overwrite"
+                    ) from error
+            return destination
         except PlaywrightTimeoutError as error:
             message = await page.locator("#read-err").text_content()
             detail = (message or "fetch timed out").strip()
             raise RuntimeError(detail) from error
         finally:
+            if ready and not ready.done():
+                ready.cancel()
+                await asyncio.gather(ready, return_exceptions=True)
             await browser.close()
-
-    destination = output or Path(default_name)
-    if destination.exists() and not force:
-        raise FileExistsError(f"output exists: {destination}; use --force to overwrite")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(data)
-    return destination
 
 
 def main() -> int:
     args = parse_args()
     try:
-        if len(sys.argv) > 1 and sys.argv[1] == "fetch":
-            path = asyncio.run(fetch_bin(args.url, args.output, args.force, args.timeout))
+        if args.command in ("fetch", "download"):
+            path = asyncio.run(
+                fetch_bin(args.url, args.output, args.force, args.timeout)
+            )
             print(path)
             return 0
         if not args.file.is_file():
