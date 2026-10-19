@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import math
 import os
 import shutil
 import sys
@@ -17,6 +18,8 @@ from playwright.async_api import async_playwright
 from . import __version__
 
 URL = "https://ravenbin.com/"
+# Playwright uses Node timers; larger millisecond delays become 1 ms.
+MAX_TIMEOUT_MS = 2**31 - 1
 
 
 def browser_options() -> dict[str, Any]:
@@ -24,15 +27,26 @@ def browser_options() -> dict[str, Any]:
     executable = os.environ.get("RAVENBIN_CHROMIUM_PATH")
     if executable:
         options["executable_path"] = executable
-    if os.geteuid() == 0:
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
         options["args"] = ["--no-sandbox"]
     return options
+
+
+def positive_timeout(value: str) -> float:
+    try:
+        timeout = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("timeout must be finite positive seconds") from error
+    milliseconds = timeout * 1000
+    if not math.isfinite(milliseconds) or milliseconds <= 0 or milliseconds > MAX_TIMEOUT_MS:
+        raise argparse.ArgumentTypeError("timeout must be finite positive seconds within the browser timer limit")
+    return timeout
 
 
 def add_common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--timeout",
-        type=float,
+        type=positive_timeout,
         default=300,
         help="Operation timeout in seconds (default: 300).",
     )

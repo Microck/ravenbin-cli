@@ -49,3 +49,7 @@ Raven currently limits users to six active bins and two uploads in progress. Its
 ## license
 
 MIT. Raven Bin is a separate service operated by Raven Technologies Group.
+
+## verification
+
+Run `python -m unittest discover -s tests -v` after installation. CI checks the actual CLI subprocess contract and browser-launch option construction on Linux, Windows, and macOS with Python 3.9 and 3.13. Timeouts must be finite positive seconds no larger than 2147483.647 (the browser driver timer limit). These tests do not upload a file or contact Raven Bin; live service encryption/upload/download conformance remains separate.
