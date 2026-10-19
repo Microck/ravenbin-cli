@@ -56,7 +56,7 @@ class CliTests(unittest.TestCase):
     def test_version(self) -> None:
         run = run_cli("--version")
         self.assertEqual(run.returncode, 0)
-        self.assertEqual(run.stdout.strip(), "ravenbin 0.2.0")
+        self.assertEqual(run.stdout.strip(), "ravenbin 0.2.1")
 
     def test_missing_command_is_usage_error(self) -> None:
         run = run_cli()
