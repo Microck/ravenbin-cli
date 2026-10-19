@@ -38,11 +38,13 @@ class CliTests(unittest.TestCase):
                 os.geteuid = original
 
     def test_timeout_requires_finite_positive_seconds(self) -> None:
-        for value in ("0", "-1", "nan", "inf", "-inf"):
+        for value in ("0", "-1", "nan", "inf", "-inf", "1e308", str((cli.MAX_TIMEOUT_MS + 1) / 1000)):
             run = run_cli("fetch", "https://example.com/", "--timeout=" + value)
             self.assertEqual(run.returncode, 2)
             self.assertIn("timeout must be finite positive seconds", run.stderr)
         self.assertEqual(cli.parse_args(["fetch", "https://example.com/", "--timeout=0.5"]).timeout, 0.5)
+        maximum = cli.MAX_TIMEOUT_MS / 1000
+        self.assertEqual(cli.positive_timeout(str(maximum)) * 1000, cli.MAX_TIMEOUT_MS)
 
     def test_help_lists_commands(self) -> None:
         run = run_cli("--help")

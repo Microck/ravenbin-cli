@@ -18,6 +18,8 @@ from playwright.async_api import async_playwright
 from . import __version__
 
 URL = "https://ravenbin.com/"
+# Playwright uses Node timers; larger millisecond delays become 1 ms.
+MAX_TIMEOUT_MS = 2**31 - 1
 
 
 def browser_options() -> dict[str, Any]:
@@ -35,8 +37,9 @@ def positive_timeout(value: str) -> float:
         timeout = float(value)
     except ValueError as error:
         raise argparse.ArgumentTypeError("timeout must be finite positive seconds") from error
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise argparse.ArgumentTypeError("timeout must be finite positive seconds")
+    milliseconds = timeout * 1000
+    if not math.isfinite(milliseconds) or milliseconds <= 0 or milliseconds > MAX_TIMEOUT_MS:
+        raise argparse.ArgumentTypeError("timeout must be finite positive seconds within the browser timer limit")
     return timeout
 
 
