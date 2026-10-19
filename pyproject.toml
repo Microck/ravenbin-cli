@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ravenbin-cli"
-version = "0.2.0"
+version = "0.2.1"
 description = "Upload and download temporary files with Raven Bin"
 readme = "README.md"
 requires-python = ">=3.9"
