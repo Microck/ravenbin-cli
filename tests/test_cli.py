@@ -4,6 +4,8 @@ import os
 import subprocess
 import sys
 import unittest
+
+from ravenbin import cli
 from pathlib import Path
 
 
@@ -24,6 +26,24 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 class CliTests(unittest.TestCase):
+    def test_browser_options_without_posix_geteuid(self) -> None:
+        original = getattr(os, "geteuid", None)
+        if original is not None:
+            del os.geteuid
+        try:
+            self.assertTrue(cli.browser_options()["headless"])
+            self.assertNotIn("args", cli.browser_options())
+        finally:
+            if original is not None:
+                os.geteuid = original
+
+    def test_timeout_requires_finite_positive_seconds(self) -> None:
+        for value in ("0", "-1", "nan", "inf", "-inf"):
+            run = run_cli("fetch", "https://example.com/", "--timeout=" + value)
+            self.assertEqual(run.returncode, 2)
+            self.assertIn("timeout must be finite positive seconds", run.stderr)
+        self.assertEqual(cli.parse_args(["fetch", "https://example.com/", "--timeout=0.5"]).timeout, 0.5)
+
     def test_help_lists_commands(self) -> None:
         run = run_cli("--help")
         self.assertEqual(run.returncode, 0)

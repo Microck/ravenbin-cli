@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import math
 import os
 import shutil
 import sys
@@ -24,15 +25,25 @@ def browser_options() -> dict[str, Any]:
     executable = os.environ.get("RAVENBIN_CHROMIUM_PATH")
     if executable:
         options["executable_path"] = executable
-    if os.geteuid() == 0:
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
         options["args"] = ["--no-sandbox"]
     return options
+
+
+def positive_timeout(value: str) -> float:
+    try:
+        timeout = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("timeout must be finite positive seconds") from error
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise argparse.ArgumentTypeError("timeout must be finite positive seconds")
+    return timeout
 
 
 def add_common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--timeout",
-        type=float,
+        type=positive_timeout,
         default=300,
         help="Operation timeout in seconds (default: 300).",
     )
